@@ -21,7 +21,7 @@ packaged as small typed modules behind **one interface** that drops into *any* l
 > your own tools (MCP). It **composes _with_ your framework, not against it.**
 
 ```bash
-pip install pyhar-agents        # then:  import pyhar   (see "Install & naming")
+pip install pyhar-agents        # then:  import pyhar
 ```
 
 ---
@@ -31,7 +31,7 @@ pip install pyhar-agents        # then:  import pyhar   (see "Install & naming")
 - [Why](#why) · [The keystone: `Component`](#the-keystone-component) · [The loop](#the-loop)
 - [Quickstart](#quickstart) · [Use cases](#use-cases) · [Components](#components) · [Model backends](#model-backends)
 - [Compose with your runtime & MCP](#compose-with-your-runtime--mcp) · [The measured win](#the-measured-win)
-- [Docs](#docs) · [Design principles](#design-principles) · [Install & naming](#install--naming)
+- [Docs](#docs) · [Design principles](#design-principles) · [Install](#install)
 
 ---
 
@@ -273,11 +273,9 @@ seed lives in `pyhar.registry`), **runtime-structure optimization** ("autograd f
 production traces", the v2 bet), and **hardened framework adapters** (the binders
 stay experimental until pinned to a released middleware surface).
 
-## Install & naming
+## Install
 
-The bare PyPI name `pyhar` is held by an abandoned 2022 stub, so the package
-publishes as **`pyhar-agents`** — but the **import name is `pyhar`** (same split
-as `opencv-python` → `import cv2`):
+The distribution is **`pyhar-agents`** on PyPI; the import name is **`pyhar`**.
 
 ```bash
 pip install pyhar-agents               # then:  import pyhar

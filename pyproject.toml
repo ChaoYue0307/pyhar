@@ -3,8 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# The PyPI distribution name `pyhar` is already taken (an abandoned 2022 stub),
-# so this publishes as `pyhar-agents`. The IMPORT name stays `pyhar`
+# Distribution name is `pyhar-agents`; the import package is `pyhar`
 # (`pip install pyhar-agents` -> `import pyhar`).
 name = "pyhar-agents"
 version = "0.2.0"

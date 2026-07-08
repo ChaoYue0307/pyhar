@@ -3,8 +3,7 @@
 All notable changes to pyhar are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow SemVer.
 
-Published to PyPI as `pyhar-agents` (the bare `pyhar` name is taken); the import
-name is `pyhar`.
+Distributed on PyPI as `pyhar-agents`; the import name is `pyhar`.
 
 ## [0.2.0] — 2026-07-08
 
