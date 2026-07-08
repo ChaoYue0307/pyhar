@@ -43,9 +43,10 @@ push a `vX.Y.Z` tag.
    - Repository name: `pyhar`
    - Workflow name: `release.yml`
    - Environment name: `pypi`
-3. (Optional) In the GitHub repo settings → *Environments*, create an
-   environment named `pypi` and add required reviewers if you want a manual
-   approval gate before each publish.
+The GitHub side is **already configured**: a `pypi` environment exists with a
+required-reviewer gate (owner `ChaoYue0307`), so every publish waits for a
+one-click approval before it runs. Adjust reviewers under repo *Settings →
+Environments → pypi* if you want.
 
 **Every release after that:**
 
@@ -54,8 +55,9 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-CI builds the sdist + wheel and publishes them. Watch it under the repo's
-**Actions** tab. Then create a GitHub Release for the tag (optional but nice):
+CI builds the sdist + wheel, then pauses for approval. **Approve the deployment**
+under the repo's **Actions** tab (the run for the tag) and it publishes. Then
+create a GitHub Release for the tag (optional but nice):
 
 ```bash
 gh release create v0.3.0 --title "v0.3.0" --notes-from-tag
