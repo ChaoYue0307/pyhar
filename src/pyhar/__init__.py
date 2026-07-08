@@ -20,8 +20,10 @@ from .components import (
     FileStore,
     Memory,
     MemoryStore,
+    Permissions,
     StateArtifact,
     ToolOutputBudget,
+    Tracer,
     Verifier,
 )
 from .core import (
@@ -38,11 +40,12 @@ from .core import (
     ToolCall,
     Usage,
     default_token_counter,
+    schema_from_signature,
     tool,
 )
 from .subagent import spawn, subagent_tool
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     # core
@@ -59,6 +62,7 @@ __all__ = [
     "Usage",
     "Tool",
     "tool",
+    "schema_from_signature",
     "default_token_counter",
     # components
     "Compactor",
@@ -70,6 +74,8 @@ __all__ = [
     "StateArtifact",
     "MemoryStore",
     "FileStore",
+    "Permissions",
+    "Tracer",
     # subagents
     "spawn",
     "subagent_tool",

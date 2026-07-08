@@ -3,6 +3,25 @@
 All notable changes to pyhar are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow SemVer.
 
+Published to PyPI as `pyhar-agents` (the bare `pyhar` name is taken); the import
+name is `pyhar`.
+
+## [0.2.0] — 2026-07-08
+
+### Added
+- **Automatic tool schemas** — `@tool` now derives a JSON `input_schema` from the
+  function's type hints (so real models actually see a tool's parameters).
+  Public helper `schema_from_signature`; pass `schema=` to override.
+- **`before_tool` lifecycle hook** on `Component` — gate a tool call before it
+  runs; return a string to deny (it becomes the tool result). Wired into the
+  `Harness` loop and the `component_hooks` adapter.
+- **`Permissions`** component — allow/deny lists or a policy callback for
+  tool authorization; denials recorded in `state.memory['_denied']`.
+- **`Tracer`** component — records the run as a structured event stream in
+  `state.memory['_trace']`, with an optional live `sink`.
+- `docs/` — comprehensive guides (concepts, components, models, adapters,
+  cookbook) plus more runnable examples.
+
 ## [0.1.0] — 2026-07-08
 
 ### Added

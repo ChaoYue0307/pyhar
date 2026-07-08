@@ -82,7 +82,8 @@ class Harness:
 
             if response.tool_calls:
                 for call in response.tool_calls:
-                    result = self._dispatch(call)
+                    denial = self._gate(state, call)
+                    result = denial if denial is not None else self._dispatch(call)
                     for c in self.components:
                         result = c.after_tool(state, call, result)
                     state.add_message(
@@ -94,16 +95,20 @@ class Harness:
                         )
                     )
 
+            if not response.tool_calls:
+                # candidate final answer — expose it BEFORE after_turn so a
+                # Verifier's check can inspect state.result. If the task re-opens,
+                # the next candidate turn overwrites it.
+                state.result = response.text
+
             for c in self.components:
                 c.after_turn(state)
 
             if not response.tool_calls:
-                # candidate final answer — components may veto stopping
+                # a component (e.g. a failed Verifier) may veto stopping
                 if any(c.should_stop(state) is False for c in self.components):
                     continue
                 state.done = True
-                if state.result is None:
-                    state.result = response.text
             elif any(c.should_stop(state) is True for c in self.components):
                 state.done = True
 
@@ -126,6 +131,19 @@ class Harness:
         else:
             state.messages.extend(task)
         return state
+
+    def _gate(self, state: HarnessState, call: ToolCall) -> str | None:
+        """Ask every component to allow/deny a tool call; the first denial wins.
+
+        All ``before_tool`` hooks run even after a denial so observers (e.g.
+        ``Tracer``) always see the call regardless of component order.
+        """
+        denial: str | None = None
+        for c in self.components:
+            d = c.before_tool(state, call)
+            if d is not None and denial is None:
+                denial = d
+        return denial
 
     def _dispatch(self, call: ToolCall) -> Any:
         tool = self.tools.get(call.name)

@@ -74,6 +74,20 @@ def test_verifier_retries_until_check_passes():
     assert state.turn == 2  # one failed candidate, one successful
 
 
+def test_verifier_check_can_read_state_result_directly():
+    # the candidate answer is exposed as state.result BEFORE after_turn, so a
+    # check that reads only state.result works (no need to dig into messages)
+    model = ScriptedModel(["nope", "the answer is 42"])
+
+    def check(state):
+        return ("42" in (state.result or ""), "must contain 42")
+
+    state = Harness(model, components=[Verifier(check, max_retries=2)]).run("q")
+    assert state.memory["_verified"] is True
+    assert state.result == "the answer is 42"
+    assert state.turn == 2
+
+
 def test_verifier_gives_up_after_max_retries():
     model = ScriptedModel(["nope", "still nope", "nope again", "and again"])
 

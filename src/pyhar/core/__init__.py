@@ -10,7 +10,7 @@ from .state import (
     Usage,
     default_token_counter,
 )
-from .tool import Tool, tool
+from .tool import Tool, schema_from_signature, tool
 
 __all__ = [
     "Component",
@@ -27,4 +27,5 @@ __all__ = [
     "default_token_counter",
     "Tool",
     "tool",
+    "schema_from_signature",
 ]

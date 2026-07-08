@@ -34,7 +34,7 @@ def main() -> None:
 
         if resp.tool_calls:
             for call in resp.tool_calls:
-                raw = "match at line %d\n" % 0 + ("x" * 2000)   # a big tool result
+                raw = "match at line 0\n" + ("x" * 2000)   # a big tool result
                 result = raw
                 for c in components:                            # <- component runs here
                     result = c.after_tool(state, call, result)

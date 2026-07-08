@@ -36,6 +36,14 @@ def component_hooks(components: Iterable[Component]) -> dict[str, Callable]:
         for c in comps:
             c.after_model(state, response)
 
+    def before_tool(state: HarnessState, call: ToolCall) -> str | None:
+        denial: str | None = None
+        for c in comps:
+            d = c.before_tool(state, call)
+            if d is not None and denial is None:
+                denial = d
+        return denial
+
     def after_tool(state: HarnessState, call: ToolCall, result: Any) -> Any:
         for c in comps:
             result = c.after_tool(state, call, result)
@@ -56,6 +64,7 @@ def component_hooks(components: Iterable[Component]) -> dict[str, Callable]:
         "on_start": on_start,
         "before_model": before_model,
         "after_model": after_model,
+        "before_tool": before_tool,
         "after_tool": after_tool,
         "after_turn": after_turn,
         "should_stop": should_stop,
