@@ -2,7 +2,7 @@
 
 Lazy-imports the ``anthropic`` SDK so ``import pyhar`` never requires it —
 the ImportError is raised only if you actually construct an ``AnthropicModel``
-without it installed (``pip install pyhar[anthropic]``).
+without it installed (``pip install "pyhar-agents[anthropic]"``).
 
 Follows the current Messages API: adaptive thinking via ``thinking={"type":
 "adaptive"}`` (never ``budget_tokens``), depth via ``output_config.effort``, and
@@ -92,7 +92,7 @@ def _build_client(api_key: str | None) -> Any:
         import anthropic
     except ImportError as e:  # pragma: no cover - exercised only without the SDK
         raise ImportError(
-            "AnthropicModel needs the anthropic SDK — `pip install pyhar[anthropic]`. "
+            "AnthropicModel needs the anthropic SDK — `pip install 'pyhar-agents[anthropic]'`. "
             "Or pass client=... to inject your own."
         ) from e
     return anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()

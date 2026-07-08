@@ -77,8 +77,8 @@ A `Model` is anything mapping messages + tools to a `Response`. Provider SDKs ar
 from pyhar.models import AnthropicModel, OpenAIModel, OllamaModel
 from pyhar.presets import coding_agent
 
-harness = coding_agent(AnthropicModel("claude-opus-4-8"), tools=[...])   # pip install pyhar[anthropic]
-harness = coding_agent(OpenAIModel("gpt-4o-mini"), tools=[...])          # pip install pyhar[openai]
+harness = coding_agent(AnthropicModel("claude-opus-4-8"), tools=[...])   # pip install "pyhar-agents[anthropic]"
+harness = coding_agent(OpenAIModel("gpt-4o-mini"), tools=[...])          # pip install "pyhar-agents[openai]"
 harness = coding_agent(OllamaModel("llama3.1"), tools=[...])             # local OSS, zero deps
 ```
 
@@ -149,11 +149,17 @@ Still deliberately deferred:
 - **Hardened framework adapters** — the LangGraph / OpenAI-Agents binders are
   marked experimental until pinned against a released middleware surface.
 
-## Naming note
+## Install & naming
 
-Verify the PyPI *distribution* name `pyhar` is available before publishing
-(`pip index versions pyhar`); use a variant if it's taken. The **import name is
-`pyhar`** regardless.
+The PyPI *distribution* name `pyhar` is already taken (an abandoned 2022 stub),
+so the package publishes as **`pyhar-agents`** — but the **import name is `pyhar`**
+(same split as `opencv-python` → `import cv2`):
+
+```bash
+pip install pyhar-agents               # then:  import pyhar
+pip install "pyhar-agents[anthropic]"  # + the Anthropic backend
+pip install "pyhar-agents[openai]"     # + the OpenAI backend
+```
 
 ## License
 

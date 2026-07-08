@@ -1,6 +1,6 @@
 """OpenAI (and OpenAI-compatible) backend.
 
-Lazy-imports the ``openai`` SDK (`pip install pyhar[openai]`). Pass
+Lazy-imports the ``openai`` SDK (`pip install "pyhar-agents[openai]"`). Pass
 ``base_url`` to point at any OpenAI-compatible server — vLLM, Together, LM Studio,
 Ollama's ``/v1`` endpoint, etc. — which is the common way to run OSS models.
 
@@ -81,7 +81,7 @@ def _build_client(api_key: str | None, base_url: str | None) -> Any:
         import openai
     except ImportError as e:  # pragma: no cover
         raise ImportError(
-            "OpenAIModel needs the openai SDK — `pip install pyhar[openai]`. "
+            "OpenAIModel needs the openai SDK — `pip install 'pyhar-agents[openai]'`. "
             "Or pass client=... to inject your own."
         ) from e
     return openai.OpenAI(api_key=api_key, base_url=base_url)
