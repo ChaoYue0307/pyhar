@@ -283,10 +283,11 @@ pip install "pyhar-agents[anthropic]"  # + the Anthropic backend
 pip install "pyhar-agents[openai]"     # + the OpenAI backend
 ```
 
-## Contributing
+## Contributing & releasing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The bar for a new primitive: *does it
-implement `Component`, work standalone, and drop into any loop?*
+implement `Component`, work standalone, and drop into any loop?* Publishing to
+PyPI is documented in [RELEASING.md](RELEASING.md) (tag `vX.Y.Z` → CI publishes).
 
 ## License
 
