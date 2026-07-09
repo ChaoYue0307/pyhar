@@ -40,6 +40,7 @@ class Harness:
         token_counter: TokenCounter = default_token_counter,
         max_turns: int = 20,
         parallel_tools: bool = False,
+        stream: bool = False,
     ):
         self.model = model
         self.components: list[Component] = list(components)
@@ -52,6 +53,7 @@ class Harness:
             self.budget.max_turns = max_turns
         self.token_counter = token_counter
         self.parallel_tools = parallel_tools
+        self.stream = stream
 
     # -- public API ------------------------------------------------------
 
@@ -79,7 +81,7 @@ class Harness:
             for c in self.components:
                 c.before_model(state)
 
-            response = self.model(list(state.messages), list(state.tools.values()))
+            response = self._call_model(state)
             state.usage.add(response.usage)
             state.last_response = response
             state.last_turn_had_tool_calls = bool(response.tool_calls)
@@ -139,6 +141,23 @@ class Harness:
         else:
             state.messages.extend(task)
         return state
+
+    def _call_model(self, state: HarnessState) -> Any:
+        """One model call; with ``stream=True`` and a streaming-capable model,
+        text deltas fan out to every component's ``on_delta`` as they arrive."""
+        messages = list(state.messages)
+        tools = list(state.tools.values())
+        if self.stream:
+            stream_fn = getattr(self.model, "stream", None)
+            if callable(stream_fn):
+                def fanout(delta: str) -> None:
+                    for c in self.components:
+                        c.on_delta(state, delta)
+
+                return stream_fn(messages, tools, on_delta=fanout)
+            # model can't stream — degrade gracefully, but leave a breadcrumb
+            state.memory.setdefault("_stream_fallback", True)
+        return self.model(messages, tools)
 
     def _run_tools(
         self, state: HarnessState, calls: list[ToolCall]

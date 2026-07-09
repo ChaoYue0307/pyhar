@@ -584,6 +584,77 @@ out of the box, and — like every built-in — it's registered by name:
 
 ---
 
+## 13. Stream the answer as it's generated
+
+**When:** you're building a UI and want tokens on screen as they arrive.
+Construct the harness with `stream=True`; any component's
+`on_delta(state, delta)` receives the chunks, and the loop's semantics are
+otherwise unchanged. Models that can't stream degrade gracefully.
+
+```python
+from pyhar import Component, Harness, ScriptedModel
+
+
+class LivePrinter(Component):
+    def on_delta(self, state, delta):
+        print(delta, end="", flush=True)
+
+
+model = ScriptedModel(["streaming answers feel alive"])
+state = Harness(model, components=[LivePrinter()], stream=True).run("say something")
+print()
+print("final result:", state.result)
+```
+
+Every stock backend streams (`AnthropicModel`, `OpenAIModel`, `OllamaModel`,
+`ScriptedModel`), and the [combinators](models.md#combinators--retry-fallback-routing)
+forward streaming, so `RetryModel(AnthropicModel(...))` still streams.
+`Tracer(include_deltas=True)` records a `delta` event per chunk.
+
+---
+
+## 14. Ship a harness as shareable config
+
+**When:** you want harness compositions in JSON/YAML — checked into a repo,
+A/B-tested, or published alongside a component package. Components resolve by
+their registered name; third-party packages join via the `pyhar.components`
+entry-point group (`registry.load_entrypoints()`).
+
+```python
+from pyhar import ScriptedModel, harness_from_config, tool
+
+
+@tool
+def read_log(path: str) -> str:
+    """Return a big log blob."""
+    return "log line\n" * 500
+
+
+config = {                       # this dict could come straight from JSON/YAML
+    "system": "You are a careful log analyst.",
+    "components": [
+        {"name": "tool_output_budget", "args": {"max_tokens": 200}},
+        "loop_guard",
+        "tracer",
+    ],
+    "budget": {"max_context_tokens": 2000},
+    "max_turns": 10,
+}
+
+model = ScriptedModel([("tool", "read_log", {"path": "app.log"}), "all quiet"])
+harness = harness_from_config(config, model=model, tools=[read_log])
+state = harness.run("scan the log")
+
+print("result:", state.result)
+print("tokens saved:", state.memory.get("_tool_savings", 0))
+```
+
+Unknown config keys raise `ValueError` (typos fail loudly), keyword overrides
+win over config values, and `harness_cls=AsyncHarness` builds the async twin
+from the same config.
+
+---
+
 ## Semantics worth knowing in 0.3.0
 
 Small behavioral fixes that make harnesses safer to reuse and reason about:

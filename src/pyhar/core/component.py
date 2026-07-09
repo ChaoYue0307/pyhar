@@ -37,6 +37,11 @@ class Component:
         """Inspect/react to the raw model response (already appended as an
         assistant message by the harness)."""
 
+    def on_delta(self, state: HarnessState, delta: str) -> None:
+        """A streaming text delta from the model. Fired only when the harness
+        runs with ``stream=True`` and the model supports streaming; the full
+        response still arrives via ``after_model`` afterwards."""
+
     def before_tool(self, state: HarnessState, call: ToolCall) -> str | None:
         """Gate a tool call before it executes. Return ``None`` to allow it, or
         a string to DENY it — the string is used as the tool result instead of

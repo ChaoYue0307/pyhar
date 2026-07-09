@@ -11,7 +11,7 @@ packaged as small typed modules behind **one interface** that drops into *any* l
 [![CI](https://github.com/ChaoYue0307/pyhar/actions/workflows/ci.yml/badge.svg)](https://github.com/ChaoYue0307/pyhar/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%20%E2%80%93%203.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-73%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-103%20passing-brightgreen)
 ![Deps](https://img.shields.io/badge/runtime%20deps-0-informational)
 
 </div>
@@ -63,6 +63,7 @@ class Component:
     def on_start(self, state): ...                      # once, before the first model call
     def before_model(self, state): ...                  # shape context (compaction, retrieval)
     def after_model(self, state, response): ...          # inspect the model output
+    def on_delta(self, state, delta): ...                 # streaming text chunks (stream=True)
     def before_tool(self, state, call) -> str | None: ...# gate a tool call — return a str to DENY
     def after_tool(self, state, call, result): ...        # transform a tool result (budget it)
     def after_turn(self, state): ...                     # verify, checkpoint, write memory
@@ -141,7 +142,9 @@ or `OllamaModel(...)` to run against a real model — nothing else changes.
 | Break the repeated-tool-call death spiral | `LoopGuard` | denies an identical call after N repeats, nudges a change of approach |
 | Get structured (JSON) final answers | `Verifier` + `checks.json_schema_check` | schema-validated output with targeted retry feedback |
 | Run async models and tools | `AsyncHarness` | `await harness.arun(task)`; sync pieces auto-offload to threads |
+| Stream the answer as it's generated | `stream=True` + `on_delta` | text deltas fan out to components; models degrade gracefully |
 | Survive flaky providers / cut costs | `RetryModel` / `FallbackModel` / `RouterModel` | backoff, failover, cheap↔strong routing — they nest |
+| Ship a harness as shareable data | `harness_from_config` | components by registered name + args, from JSON/YAML |
 | Tune a harness with numbers, not vibes | `bench` | A/B configs over N trials; means, std, success rate |
 | Reuse your scaffolding inside LangGraph | `adapters` | the same components as middleware |
 
@@ -226,9 +229,31 @@ from pyhar.adapters import component_hooks, to_langgraph_middleware
 from pyhar.mcp import tools_from_mcp
 
 hooks = component_hooks([Compactor(...), ToolOutputBudget(...)])  # drive from your own loop
-mw    = to_langgraph_middleware([Compactor(...)])                 # experimental: LangGraph middleware
+mw    = to_langgraph_middleware([Permissions(deny=["rm"])])       # LangChain 1.x middleware
 tools = tools_from_mcp(mcp_descriptors, call_tool)                # import MCP tools as Tool objects
 ```
+
+The LangGraph adapter is hardened against LangChain 1.x (`pip install
+"pyhar-agents[langgraph]"`) and covered by integration tests running a real
+`create_agent` graph — denials skip tool execution, oversized results shrink,
+and per-run component state resets per `invoke`.
+
+Harness compositions are also **shareable data** — build one from JSON/YAML:
+
+```python
+from pyhar import harness_from_config
+
+harness = harness_from_config({
+    "components": [
+        {"name": "tool_output_budget", "args": {"max_tokens": 300}},
+        "loop_guard", "tracer",
+    ],
+    "budget": {"max_context_tokens": 2000},
+}, model=model, tools=[...])
+```
+
+Third-party packages publish components via the `pyhar.components` entry-point
+group; `registry.load_entrypoints()` discovers them.
 
 Details, subagents, and the OpenAI-Agents binder → **[docs/adapters-and-mcp.md](docs/adapters-and-mcp.md)**.
 
@@ -253,6 +278,7 @@ Run it yourself:
 python examples/react_agent.py            # full coding-agent harness
 python examples/minimal_loop.py           # SAME components, a hand-rolled loop
 python examples/async_agent.py            # async model + parallel async tools
+python examples/streaming.py              # live deltas via the on_delta hook
 python examples/model_routing.py          # retry, failover, cheap/strong tiering
 python examples/permissions_and_tracing.py# gated + traced agent
 python examples/bench_demo.py             # the A/B above

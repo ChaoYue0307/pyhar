@@ -5,6 +5,37 @@ All notable changes to pyhar are documented here. Format loosely follows
 
 Distributed on PyPI as `pyhar-agents`; the import name is `pyhar`.
 
+## [0.4.0] — 2026-07-09
+
+### Added
+- **Streaming** — `Harness(..., stream=True)` / `AsyncHarness` fan text deltas
+  to a new `Component.on_delta(state, delta)` hook as the model produces them.
+  Models opt in by implementing `stream(messages, tools, *, on_delta)` (or
+  async `astream`): implemented for `AnthropicModel` (SDK `messages.stream`),
+  `OpenAIModel` (chunk accumulation incl. split tool calls + usage),
+  `OllamaModel` (NDJSON), and `ScriptedModel` (word-sized deltas for tests).
+  Non-streaming models degrade gracefully (`state.memory['_stream_fallback']`).
+  `Tracer(include_deltas=True)` records delta events.
+- **LangGraph adapter hardened** — rewritten against the real LangChain 1.x
+  middleware API (pinned `langchain>=1.0,<2`, exercised against 1.3 in new
+  integration tests + a dedicated CI job): correct `(state, runtime)` hook
+  signatures, `wrap_tool_call` with the real `ToolCallRequest`/`ToolMessage`
+  types, `before_tool` gating that skips execution on denial, and
+  `before_agent`/`after_agent` mapped to `on_start`/`on_end` so per-run resets
+  (LoopGuard, Verifier) and setup components (Memory, StateArtifact) work per
+  `invoke`. Install via the new `pyhar-agents[langgraph]` extra. No longer
+  experimental.
+- **Registry ecosystem** — `registry.create(name, **args)`,
+  `registry.build(specs)`, and `registry.load_entrypoints()`: third-party
+  packages publish components under the `pyhar.components` entry-point group
+  and they are discovered without imports. `registry.get` now raises a helpful
+  error listing available names.
+- **Config-driven harnesses** — `harness_from_config(config, model=..., tools=...)`
+  builds a `Harness`/`AsyncHarness` from a JSON-able spec (components by
+  registered name + args, budget, system, max_turns, parallel_tools, stream);
+  unknown keys raise. Harness compositions are now shareable data.
+- New example: `streaming.py`.
+
 ## [0.3.0] — 2026-07-09
 
 ### Added

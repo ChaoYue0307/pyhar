@@ -35,6 +35,7 @@ Every component subclasses `Component` and overrides some subset of these hooks
 | `on_start(state)` | once, before the loop | — |
 | `before_model(state)` | before each model call | — |
 | `after_model(state, response)` | after each model call | — |
+| `on_delta(state, delta)` | per streamed text chunk (harness built with `stream=True`) | — |
 | `before_tool(state, call)` | before a tool runs | return a `str` to **deny** the call (the string becomes the tool result) |
 | `after_tool(state, call, result)` | after a tool runs | return value replaces `result` (chained across components) |
 | `after_turn(state)` | after each turn | — |

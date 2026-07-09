@@ -28,3 +28,19 @@ jobs:
         run: mypy src
       - name: Test (pytest)
         run: pytest -q
+
+  integration-langgraph:
+    # pyhar core is zero-dependency; this leg proves the LangGraph adapter
+    # against the pinned LangChain 1.x line.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install with the langgraph extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,langgraph]"
+      - name: Integration tests
+        run: pytest tests/test_langgraph_integration.py -q

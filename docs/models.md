@@ -55,6 +55,43 @@ passed through as-is. The stock backends fill it — Anthropic reports values li
 `length`). It defaults to `None`, so custom backends and `ScriptedModel` are
 unaffected if they never set it.
 
+### Streaming (`stream` / `astream`)
+
+New in 0.4.0: a model MAY additionally implement
+
+```python
+def stream(self, messages, tools, *, on_delta) -> Response: ...
+# and/or, for async backends:
+async def astream(self, messages, tools, *, on_delta) -> Response: ...
+```
+
+— call `on_delta(text_chunk)` as text arrives, then return the same complete
+`Response` a plain call would. A harness built with `stream=True` uses it when
+present and fans each chunk to every component's `on_delta(state, delta)` hook;
+models without `stream` degrade gracefully (full response, no deltas, and
+`state.memory["_stream_fallback"] = True` as a breadcrumb).
+
+All stock backends stream: `AnthropicModel` (SDK `messages.stream`),
+`OpenAIModel` (chunk accumulation, including tool calls split across chunks;
+requests `stream_options={"include_usage": True}` and retries without it on
+servers that reject the field), `OllamaModel` (NDJSON lines), and
+`ScriptedModel` (word-sized deltas — used by every streaming test and example).
+The [combinators](#combinators--retry-fallback-routing) forward `stream` too, so
+`RetryModel(FallbackModel([...]))` keeps streaming; note that a retried or
+failed-over attempt re-emits its text from the start.
+
+```python
+from pyhar import Component, Harness, ScriptedModel
+
+class Printer(Component):
+    def on_delta(self, state, delta):
+        print(delta, end="", flush=True)
+
+state = Harness(ScriptedModel(["hello streamed world"]),
+                components=[Printer()], stream=True).run("hi")
+print()  # -> hello streamed world   (arrived as three chunks)
+```
+
 ## `ScriptedModel` — deterministic, key-free
 
 Every runnable snippet on this page uses `ScriptedModel`, so you can paste and

@@ -3,13 +3,22 @@
 pyhar never imports a provider SDK. A ``Model`` is anything that maps a
 message list + tool specs to a ``Response``. Wrap Anthropic/OpenAI/a local model
 yourself; use ``ScriptedModel`` for deterministic, key-free tests and examples.
+
+Streaming is an optional extension: a model MAY also implement
+``stream(messages, tools, *, on_delta)`` (and/or async ``astream``) — call
+``on_delta(text_chunk)`` as text arrives and return the complete ``Response``.
+A harness constructed with ``stream=True`` uses it when present.
 """
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from .state import Message, ToolCall, Usage
+
+OnDelta = Callable[[str], None]
 
 
 @dataclass
@@ -48,6 +57,15 @@ class ScriptedModel:
         self._i += 1
         resp = self._coerce(item)
         resp.usage.input_tokens = _ctx(messages)
+        return resp
+
+    def stream(self, messages: list[Message], tools: list[Any], *, on_delta: OnDelta) -> Response:
+        """Streaming variant: emits the text answer in word-sized deltas, then
+        returns the same complete ``Response`` as ``__call__`` would."""
+        resp = self(messages, tools)
+        if resp.text:
+            for chunk in re.findall(r"\S+\s*", resp.text):
+                on_delta(chunk)
         return resp
 
     def _coerce(self, item: Any) -> Response:

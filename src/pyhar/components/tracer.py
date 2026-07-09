@@ -23,8 +23,13 @@ Sink = Callable[[dict[str, Any]], None]
 class Tracer(Component):
     name = "tracer"
 
-    def __init__(self, *, sink: Sink | None = None):
+    def __init__(self, *, sink: Sink | None = None, include_deltas: bool = False):
         self.sink = sink
+        self.include_deltas = include_deltas
+
+    def on_delta(self, state: HarnessState, delta: str) -> None:
+        if self.include_deltas:
+            self._emit(state, {"event": "delta", "turn": state.turn, "chars": len(delta)})
 
     def _emit(self, state: HarnessState, event: dict[str, Any]) -> None:
         state.memory.setdefault("_trace", []).append(event)

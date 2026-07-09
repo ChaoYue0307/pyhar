@@ -9,17 +9,36 @@ drop into any ``Harness`` unchanged:
 - ``FallbackModel`` — try models in order; on failure, move to the next.
 - ``RouterModel``   — route each call to a named model via your policy
   (the cheap/strong "frontier + sidekick" tiering pattern).
+
+All three also implement ``stream(...)``, forwarding to the wrapped model's
+``stream`` when it has one (so ``Harness(stream=True)`` keeps streaming through
+a combinator). A wrapped model without ``stream`` is called normally — the turn
+completes, just without deltas. NOTE: if an attempt fails mid-stream and is
+retried (RetryModel) or failed over (FallbackModel), the next attempt re-emits
+its text from the start — downstream UIs should treat a new turn's deltas as
+replacing, not strictly appending, on provider errors.
 """
 from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
 
-from ..core.model import Model, Response
+from ..core.model import Model, OnDelta, Response
 from ..core.state import Message
 from ..core.tool import Tool
 
 Sleeper = Callable[[float], None]
+
+
+def _invoke(model: Model, messages: list[Message], tools: list[Tool],
+            on_delta: OnDelta | None) -> Response:
+    """Call ``model.stream`` when streaming is requested and available,
+    else the plain call (no deltas)."""
+    if on_delta is not None:
+        stream_fn = getattr(model, "stream", None)
+        if callable(stream_fn):
+            return stream_fn(messages, tools, on_delta=on_delta)
+    return model(messages, tools)
 
 
 class RetryModel:
@@ -49,10 +68,18 @@ class RetryModel:
         self._sleep = sleep
 
     def __call__(self, messages: list[Message], tools: list[Tool]) -> Response:
+        return self._run(messages, tools, None)
+
+    def stream(self, messages: list[Message], tools: list[Tool], *, on_delta: OnDelta) -> Response:
+        """Streaming with the same retry semantics. A retried attempt re-emits
+        its deltas from the start (see module docstring)."""
+        return self._run(messages, tools, on_delta)
+
+    def _run(self, messages: list[Message], tools: list[Tool], on_delta: OnDelta | None) -> Response:
         last: BaseException | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                return self.model(messages, tools)
+                return _invoke(self.model, messages, tools, on_delta)
             except self.retry_on as e:  # noqa: PERF203 - retry loop by design
                 last = e
                 if attempt == self.max_retries:
@@ -84,11 +111,19 @@ class FallbackModel:
         self.last_served: int | None = None
 
     def __call__(self, messages: list[Message], tools: list[Tool]) -> Response:
+        return self._run(messages, tools, None)
+
+    def stream(self, messages: list[Message], tools: list[Tool], *, on_delta: OnDelta) -> Response:
+        """Streaming with the same failover semantics. A failed-over attempt
+        re-emits its deltas from the start (see module docstring)."""
+        return self._run(messages, tools, on_delta)
+
+    def _run(self, messages: list[Message], tools: list[Tool], on_delta: OnDelta | None) -> Response:
         self.last_served = None  # a failed call reads as None, never stale
         last: BaseException | None = None
         for i, model in enumerate(self.models):
             try:
-                resp = model(messages, tools)
+                resp = _invoke(model, messages, tools, on_delta)
                 self.last_served = i
                 return resp
             except Exception as e:
@@ -137,10 +172,17 @@ class RouterModel:
         self.last_key: str | None = None
 
     def __call__(self, messages: list[Message], tools: list[Tool]) -> Response:
+        return self._run(messages, tools, None)
+
+    def stream(self, messages: list[Message], tools: list[Tool], *, on_delta: OnDelta) -> Response:
+        """Streaming through whichever model the policy routes to."""
+        return self._run(messages, tools, on_delta)
+
+    def _run(self, messages: list[Message], tools: list[Tool], on_delta: OnDelta | None) -> Response:
         self.last_key = None  # a failed call reads as None, never stale
         key = self.route(messages, tools)
         if key not in self.models:
             key = self.default
-        resp = self.models[key](messages, tools)
+        resp = _invoke(self.models[key], messages, tools, on_delta)
         self.last_key = key  # set only after the model actually served the call
         return resp

@@ -27,6 +27,7 @@ from .components import (
     Tracer,
     Verifier,
 )
+from .config import components_from_config, harness_from_config
 from .core import (
     AsyncHarness,
     Budget,
@@ -47,7 +48,7 @@ from .core import (
 )
 from .subagent import spawn, subagent_tool
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     # core
@@ -83,10 +84,12 @@ __all__ = [
     # subagents
     "spawn",
     "subagent_tool",
-    # bench / presets / registry / models / adapters / checks
+    # bench / presets / registry / models / adapters / checks / config
     "bench",
     "BenchReport",
     "RunReport",
+    "harness_from_config",
+    "components_from_config",
     "presets",
     "registry",
     "models",

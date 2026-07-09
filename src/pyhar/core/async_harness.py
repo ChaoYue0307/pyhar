@@ -98,6 +98,23 @@ class AsyncHarness(Harness):
     async def _acall_model(self, state: HarnessState) -> Any:
         messages = list(state.messages)
         tools = list(state.tools.values())
+
+        if self.stream:
+            def fanout(delta: str) -> None:
+                for c in self.components:
+                    c.on_delta(state, delta)
+
+            astream_fn = getattr(self.model, "astream", None)
+            if callable(astream_fn):
+                return await astream_fn(messages, tools, on_delta=fanout)
+            stream_fn = getattr(self.model, "stream", None)
+            if callable(stream_fn):
+                # sync streaming off-thread; deltas arrive from the worker thread,
+                # but only this harness's state is touched and the loop is idle
+                # awaiting, so component hooks never run concurrently with it
+                return await asyncio.to_thread(stream_fn, messages, tools, on_delta=fanout)
+            state.memory.setdefault("_stream_fallback", True)
+
         # async def function OR object whose __call__ is async -> await directly
         call_impl = inspect.getattr_static(type(self.model), "__call__", None)
         is_async = inspect.iscoroutinefunction(self.model) or inspect.iscoroutinefunction(call_impl)

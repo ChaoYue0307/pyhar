@@ -7,7 +7,8 @@ to *pull other ecosystems in*, most notably tools from any MCP server. This page
 covers three interop surfaces:
 
 - **`component_hooks`** — the pure hook dict that every adapter is built on.
-- **Framework adapters** — `to_langgraph_middleware` and `to_openai_agents_hooks` (both experimental).
+- **Framework adapters** — `to_langgraph_middleware` (hardened against LangChain 1.x)
+  and `to_openai_agents_hooks` (experimental).
 - **MCP tools** — `tools_from_mcp` / `tools_from_mcp_session`.
 
 It closes with **subagents** (`subagent_tool` / `spawn`), which use nothing but a
@@ -116,40 +117,58 @@ foreign runtime.
 
 ---
 
-## LangGraph middleware (experimental)
+## LangGraph middleware
 
-> **Experimental.** LangChain's middleware surface evolves upstream; treat this
-> as a starting point and adjust the hook mapping to your installed version.
+*Hardened in 0.4.0* against LangChain 1.x (`pip install "pyhar-agents[langgraph]"`,
+pinned `langchain>=1.0,<2`) and covered by integration tests that run a real
+`create_agent` graph — sync **and** async (`invoke` / `ainvoke` / `astream`).
 
-`pyhar.adapters.to_langgraph_middleware(components)` returns a LangChain 1.0
-`AgentMiddleware` instance that forwards to your pyhar components, so a
-`Compactor` or `ToolOutputBudget` runs *inside* a LangGraph `create_agent`
-unchanged.
+`pyhar.adapters.to_langgraph_middleware(components)` returns an
+`AgentMiddleware` instance that forwards to your pyhar components.
+
+**Supported components** — those that act through the tool channel or observe:
+
+| Component | What it does inside LangGraph |
+| --- | --- |
+| `Permissions`, `LoopGuard` | gate in `wrap_tool_call` — a denial **skips execution**; the denial string reaches the model as the `ToolMessage` |
+| `ToolOutputBudget` | shrinks oversized tool results before they re-enter the graph |
+| `Tracer` (and other observers) | full event stream, reset per `invoke` |
+
+**Not supported** — components that shape the *message channel* (`Compactor`,
+`Memory`, `StateArtifact`, `ContextBuilder`, `Verifier`). LangGraph owns its
+message list, so those need pyhar's own `Harness`/`AsyncHarness`. Passing one
+raises `ValueError` up front instead of silently doing nothing.
 
 The mapping is:
 
 | LangChain middleware hook | pyhar hook |
 | --- | --- |
+| `before_agent` | `on_start` (per-`invoke` resets: LoopGuard/Tracer state) |
 | `before_model` | `before_model` |
-| `wrap_tool_call` | `after_tool` (so `ToolOutputBudget` really shrinks results) |
+| `wrap_tool_call` / `awrap_tool_call` | `before_tool` gate, then `after_tool` |
 | `after_model` | `after_turn` |
-
-Because `wrap_tool_call` wraps the real call, this adapter *can* substitute the
-tool result: pyhar's `after_tool` return value is written back onto the tool
-message's `content`. The middleware instance exposes the pyhar `HarnessState` as
-`.pyhar_state` for inspection.
+| `after_agent` | `on_end` |
 
 ```python
-from pyhar import Compactor, ToolOutputBudget
+from pyhar import Permissions, ToolOutputBudget, Tracer
 from pyhar.adapters import to_langgraph_middleware
 
-middleware = to_langgraph_middleware([ToolOutputBudget(max_tokens=500)])
+middleware = to_langgraph_middleware([
+    Permissions(deny=["delete_everything"]),
+    ToolOutputBudget(max_tokens=500),
+    Tracer(),
+])
 
 # from langchain.agents import create_agent
 # agent = create_agent(model, tools=[...], middleware=[middleware])
 # ... after a run:
+# print(middleware.pyhar_state.memory.get("_denied"))
 # print(middleware.pyhar_state.memory.get("_tool_savings"))
 ```
+
+Each `to_langgraph_middleware` call gets a unique middleware name, so several
+instances can coexist in one agent. One instance holds one `HarnessState` —
+don't share an instance across concurrently-running invokes.
 
 pyhar itself has **no** LangChain dependency — importing the adapter module never
 imports LangChain, and calling `to_langgraph_middleware` raises a clear

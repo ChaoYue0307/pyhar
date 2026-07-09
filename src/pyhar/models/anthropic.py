@@ -43,6 +43,19 @@ class AnthropicModel:
         self._client = client or _build_client(api_key)
 
     def __call__(self, messages: list[Message], tools: list[Tool]) -> Response:
+        resp = self._client.messages.create(**self._request_kwargs(messages, tools))
+        return self._to_response(resp)
+
+    def stream(self, messages: list[Message], tools: list[Tool], *, on_delta) -> Response:
+        """Streaming call via the SDK's ``messages.stream`` helper: forwards
+        text deltas to ``on_delta`` and returns the complete response."""
+        with self._client.messages.stream(**self._request_kwargs(messages, tools)) as s:
+            for text in s.text_stream:
+                on_delta(text)
+            resp = s.get_final_message()
+        return self._to_response(resp)
+
+    def _request_kwargs(self, messages: list[Message], tools: list[Tool]) -> dict[str, Any]:
         system, converted = _to_anthropic_messages(messages, self.system)
         kwargs: dict[str, Any] = {
             "model": self.model,
@@ -57,9 +70,7 @@ class AnthropicModel:
             kwargs["thinking"] = self.thinking
         if self.effort is not None:
             kwargs["output_config"] = {"effort": self.effort}
-
-        resp = self._client.messages.create(**kwargs)
-        return self._to_response(resp)
+        return kwargs
 
     def _to_response(self, resp: Any) -> Response:
         text_parts: list[str] = []
