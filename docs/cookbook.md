@@ -218,18 +218,26 @@ report = bench(
         "tuned (budget+compact)": make_config(tuned=True),
     },
     success=lambda s: s.done,
+    trials=3,   # run each config 3 times; the report carries means + success rate
 )
 print(report.table())
 
 base = next(r for r in report.runs if r.name == "baseline")
 tuned = next(r for r in report.runs if r.name.startswith("tuned"))
 saved = base.input_tokens - tuned.input_tokens
-print(f"input tokens saved: {saved}")
+print(f"mean input tokens saved: {saved:.0f}")
 ```
 
 `bench(task, {name: factory}, success=...)` runs each config from a **fresh
 factory** and returns a `BenchReport` (`.table()`, `.runs`). Runs that include a
 `ToolOutputBudget` also record `state.memory["_tool_savings"]`.
+
+**New in 0.3.0:** pass `trials=N` to run each config N times. Each `RunReport`
+then carries **means** for turns/tokens/cost, a `success_rate` (the table's `ok`
+column becomes a percentage and a `trials` column appears), and
+`input_tokens_std` / `output_tokens_std` standard deviations — so noisy
+real-model comparisons don't hinge on a single lucky run. With a deterministic
+`ScriptedModel` the trials are identical; with a live backend they won't be.
 
 ---
 
@@ -352,6 +360,247 @@ print("tokens saved by ToolOutputBudget:", state.memory.get("_tool_savings", 0))
 (chains the result), `after_turn`, `should_stop` (list of votes), `on_start`,
 `on_end`. The [LangGraph and OpenAI-Agents adapters](adapters-and-mcp.md) are thin
 binders over this same dict.
+
+---
+
+## 9. Go async — and run a turn's tool calls in parallel
+
+**When:** your tools are I/O-bound (HTTP, DB, MCP servers) and you're inside an
+event loop. `AsyncHarness` (new in 0.3.0) is a `Harness` subclass with
+`await harness.arun(task)`: async models and tools are awaited natively, plain
+sync ones are offloaded to a thread via `asyncio.to_thread` so they never block
+the loop, and **components stay sync and work unchanged**. With
+`parallel_tools=True`, all tool calls issued in one turn run concurrently via
+`asyncio.gather` — results still come back in call order.
+
+```python
+import asyncio
+import time
+
+from pyhar import AsyncHarness, Response, ScriptedModel, ToolCall, tool
+
+
+async def fetch_page(url: str) -> str:
+    """An async tool — e.g. an aiohttp call in real life."""
+    await asyncio.sleep(0.2)  # simulated network latency
+    return f"<html>content of {url}</html>"
+
+
+fetch = tool(fetch_page, name="fetch_page")
+
+# One scripted turn issues TWO fetches — they run concurrently.
+model = ScriptedModel([
+    Response(tool_calls=[
+        ToolCall(id="a", name="fetch_page", arguments={"url": "https://a.example"}),
+        ToolCall(id="b", name="fetch_page", arguments={"url": "https://b.example"}),
+    ]),
+    "Fetched both pages in parallel.",
+])
+
+
+async def main() -> None:
+    harness = AsyncHarness(model, tools=[fetch], parallel_tools=True)
+    t0 = time.monotonic()
+    state = await harness.arun("Fetch a.example and b.example.")
+    print("result: ", state.result)
+    print(f"elapsed: {time.monotonic() - t0:.2f}s  (two 0.2s fetches, run concurrently)")
+
+
+asyncio.run(main())
+```
+
+Mixing is free: sync `@tool` functions, async `def` models, and sync closures
+that return coroutines (how MCP-wrapped tools arrive) all work — awaitables are
+awaited, everything else runs in a thread. Gating still happens first:
+`before_tool` hooks run **in call order** before any parallel execution, so
+`Permissions` and `LoopGuard` keep their guarantees. The sync `Harness` gets the
+same per-turn concurrency (threads instead of `gather`) via
+`Harness(..., parallel_tools=True)`. Full version:
+[`examples/async_agent.py`](../examples/async_agent.py).
+
+---
+
+## 10. Survive flaky providers / route by cost
+
+**When:** a provider 529s at the worst moment, or you want frontier quality
+without frontier cost on every turn. The 0.3.0 combinators in `pyhar.models`
+are just `Model`s, so they nest and drop into any harness:
+`RetryModel` absorbs transient failures with exponential backoff,
+`FallbackModel` fails over to a backup, and `RouterModel` picks a model per
+call — pair it with `BudgetPolicy` for the strong-then-cheap tiering pattern.
+
+```python
+from pyhar import BudgetPolicy, Harness, ScriptedModel, tool
+from pyhar.models import FallbackModel, RetryModel, RouterModel
+
+
+class FlakyModel:
+    """Simulates a provider that fails twice before recovering."""
+
+    def __init__(self, inner):
+        self.inner, self.attempts = inner, 0
+
+    def __call__(self, messages, tools):
+        self.attempts += 1
+        if self.attempts <= 2:
+            raise ConnectionError("simulated outage")
+        return self.inner(messages, tools)
+
+
+@tool
+def lookup(q: str) -> str:
+    """Look something up."""
+    return f"result for {q}"
+
+
+# -- Retry: ride out transient outages -------------------------------------
+flaky = FlakyModel(ScriptedModel(["recovered and answered"]))
+state = Harness(RetryModel(flaky, max_retries=3, base_delay=0.01)).run("q")
+print(f"retry:    {state.result!r} after {flaky.attempts} attempts")
+
+# -- Fallback: the primary is truly down, serve from the backup ------------
+dead = FlakyModel(ScriptedModel(["never"]))
+dead.attempts = -10**9  # always failing
+fb = FallbackModel([dead, ScriptedModel(["served by the backup model"])])
+state = Harness(fb).run("q")
+print(f"fallback: {state.result!r} (served index {fb.last_served})")
+
+# -- Tiering: start strong, downshift to cheap when the budget trips -------
+tier = {"key": "strong"}
+router = RouterModel(
+    {
+        "strong": ScriptedModel([("tool", "lookup", {"q": "deep question"}),
+                                 "strong model finished the hard part"]),
+        "cheap": ScriptedModel(["cheap model wrapped up the rest"]),
+    },
+    route=lambda messages, tools: tier["key"],
+    default="strong",
+)
+budget = BudgetPolicy(
+    max_total_tokens=100_000,
+    soft_fraction=0.0000001,  # trip immediately for the demo
+    on_over_soft=lambda state: tier.update(key="cheap"),
+)
+state = Harness(router, components=[budget], tools=[lookup]).run("hard task")
+print(f"tiering:  {state.result!r} (last served: {router.last_key})")
+```
+
+They compose: `RetryModel(FallbackModel([primary, backup]))` retries the whole
+failover chain. `RetryModel(model, max_retries=3, base_delay=1.0, max_delay=30.0,
+retry_on=(Exception,))` controls what and how long; `FallbackModel.last_served`
+tells you which model answered (`None` after a failed call); `RouterModel.last_key`
+is set only after a successful call. Full version:
+[`examples/model_routing.py`](../examples/model_routing.py).
+
+---
+
+## 11. Get structured JSON output
+
+**When:** downstream code needs machine-readable output, not prose. Combine
+recipe 4's `Verifier` with the ready-made checks in `pyhar.checks` (new in
+0.3.0): `json_schema_check(schema)` validates the final answer against a
+pragmatic, zero-dependency JSON-Schema subset, and on failure feeds the model
+the **exact violation** so the retry is targeted.
+
+```python
+from pyhar import Harness, ScriptedModel, Verifier
+from pyhar.checks import json_schema_check, parse_json_result
+
+schema = {
+    "type": "object",
+    "required": ["answer", "confidence"],
+    "properties": {
+        "answer": {"type": "string"},
+        "confidence": {"type": "number"},
+    },
+    "additionalProperties": False,
+}
+
+model = ScriptedModel([
+    # 1st try: prose + wrong shape -> Verifier feeds back the exact violations
+    'Sure! Here you go: {"answer": 42}',
+    # 2nd try: valid JSON (an answer wrapped in a json code fence works too)
+    '{"answer": "use SQLite", "confidence": 0.9}',
+])
+
+harness = Harness(model, components=[Verifier(json_schema_check(schema), max_retries=2)])
+state = harness.run("Which store should we use? Respond as JSON.")
+
+print("verified:", state.memory.get("_verified"))
+print("parsed:  ", parse_json_result(state))   # -> a real dict
+```
+
+The subset covers `type` (including list form, e.g. `["string", "null"]`),
+`properties`, `required`, `items`, `enum` (JSON equality — `true` never matches
+`1`), and `additionalProperties: false`. Typos are caught early: an unknown type
+name like `"int"` raises `ValueError` at construction, not silently at run time.
+`parse_json_result(state)` tries the whole answer as JSON first, then fenced
+```` ```json ```` blocks **last-first** (the final fence is usually the real
+answer). Also available: `contains_check("42", case_sensitive=False)` and
+`regex_check(r"answer:\s*\d+")` for lighter-weight assertions.
+
+---
+
+## 12. Break tool-call loops
+
+**When:** the agent calls the same tool with the same arguments over and over —
+a classic failure mode where each retry burns tokens and changes nothing.
+`LoopGuard` (new in 0.3.0) watches tool calls in `before_tool`: once an
+identical `(name, arguments)` pair repeats `max_repeats` times in a row, further
+identical calls are **denied** and the model gets a nudge to change approach.
+Arguments are canonicalized (key order doesn't matter) and `max_total_repeats`
+backstops non-consecutive repeats across the whole run.
+
+```python
+from pyhar import Harness, LoopGuard, ScriptedModel, tool
+
+
+@tool
+def grep(q: str) -> str:
+    """Search the repo."""
+    return "no matches"
+
+
+model = ScriptedModel([
+    ("tool", "grep", {"q": "TODO"}),
+    ("tool", "grep", {"q": "TODO"}),   # identical again — streak of 2 allowed
+    ("tool", "grep", {"q": "TODO"}),   # 3rd in a row -> DENIED with a nudge
+    "grep keeps returning nothing — answering with what I have: no TODOs.",
+])
+
+harness = Harness(model, components=[LoopGuard(max_repeats=2)], tools=[grep])
+state = harness.run("Find the TODOs.")
+
+print("result:", state.result)
+print("denied:", state.memory.get("_loop_guard"))
+```
+
+The denial string comes back to the model as the tool result, so it can recover
+in-band instead of crashing the run. Defaults are `max_repeats=3` and
+`max_total_repeats=8`; counters reset in `on_start`, so a reused `Harness` starts
+every run clean. `presets.coding_agent` (recipe 1) now includes a `LoopGuard`
+out of the box, and — like every built-in — it's registered by name:
+`registry.get("loop_guard")`.
+
+---
+
+## Semantics worth knowing in 0.3.0
+
+Small behavioral fixes that make harnesses safer to reuse and reason about:
+
+- **`Budget(max_turns=0)` means zero turns.** `None` means unlimited; `0` is no
+  longer treated as "no limit".
+- **Your `Budget` is never mutated.** `Harness` copies the budget you pass in,
+  so one `Budget` object can be shared across harnesses safely.
+- **`on_end` always runs.** Component teardown executes in a `try/finally`, so
+  tracers flush and stores close even when the run raises `BudgetExceeded`.
+- **Reused harnesses start clean.** `Verifier` and `LoopGuard` reset their
+  per-run state in `on_start`, so calling `harness.run(...)` twice never leaks
+  retry counts or repeat counters between runs.
+- **`Response.stop_reason`** carries the provider's normalized stop/finish
+  reason across the Anthropic, OpenAI, and Ollama backends.
+- **Built-in components self-register** in `pyhar.registry` under their `.name`
+  (e.g. `registry.get("compactor")`).
 
 ---
 

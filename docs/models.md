@@ -37,13 +37,23 @@ class Response:
     text: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
-    raw: Any = None            # the untouched provider payload, if any
+    stop_reason: str | None = None   # provider stop/finish reason, normalized as-is
+    raw: Any = None                  # the untouched provider payload, if any
 ```
 
 `text` is the assistant's message, `tool_calls` is the list of calls the model
 wants the harness to run this turn, `usage` carries `input_tokens`,
 `output_tokens`, and `cost`, and `raw` holds the original provider object for
 escape hatches. That's all a backend has to produce.
+
+### `stop_reason`
+
+New in 0.3.0: `Response.stop_reason` carries the provider's stop/finish reason,
+passed through as-is. The stock backends fill it — Anthropic reports values like
+`end_turn` / `tool_use` / `max_tokens` / `refusal`; OpenAI reports `stop` /
+`tool_calls` / `length`; Ollama reports its `done_reason` (e.g. `stop` /
+`length`). It defaults to `None`, so custom backends and `ScriptedModel` are
+unaffected if they never set it.
 
 ## `ScriptedModel` — deterministic, key-free
 
@@ -189,6 +199,142 @@ Because local inference is free, `Usage.cost` stays `0.0`.
 | `timeout` | request timeout in seconds, default `120.0` |
 | `options` | extra Ollama options (temperature, etc.) |
 | `transport` | injectable `callable(url, payload) -> dict` for tests |
+
+## Combinators — retry, fallback, routing
+
+New in 0.3.0, `pyhar.models` ships three **model combinators**: wrappers that
+take model(s) and return a `Model`. Because the result satisfies the same
+one-method protocol, combinators nest freely and drop into any `Harness`
+unchanged:
+
+```python
+from pyhar.models import AnthropicModel, FallbackModel, OllamaModel, RetryModel
+
+model = RetryModel(FallbackModel([AnthropicModel(), OllamaModel()]))
+```
+
+That one line reads: try Claude, fail over to the local model, and retry the
+whole chain with backoff if even that fails.
+
+### `RetryModel`
+
+Retries the wrapped model on exception, with exponential backoff
+(`min(base_delay * 2**attempt, max_delay)` between attempts). Provider SDKs
+already retry HTTP 429/5xx internally — this wrapper is for everything above
+that: network flaps, local servers restarting, or models with no built-in
+retry. After the final attempt, the last exception is re-raised.
+
+| Argument | Purpose |
+| --- | --- |
+| `model` | the wrapped `Model` (positional) |
+| `max_retries` | extra attempts after the first, default `3` |
+| `base_delay` | first backoff in seconds, default `1.0` |
+| `max_delay` | backoff cap in seconds, default `30.0` |
+| `retry_on` | exception types to retry, default `(Exception,)` — anything else propagates immediately |
+| `sleep` | injectable sleeper, default `time.sleep` — pass `lambda s: None` in tests |
+
+### `FallbackModel`
+
+Tries each model in order; if one raises, moves to the next. If every model
+fails, the last exception is raised.
+
+| Argument | Purpose |
+| --- | --- |
+| `models` | sequence of models, tried in order (positional; must be non-empty) |
+| `should_fallback` | `callable(exc) -> bool` deciding whether an exception triggers failover, default: any `Exception`. Returning `False` re-raises immediately |
+
+The index of the model that served the last call is available as
+`.last_served`. It is reset at the start of every call, so **after a failed
+call it reads `None`** — never a stale index from an earlier success.
+
+A runnable demo of the nesting pattern, with a dead primary and a
+`ScriptedModel` backup:
+
+```python
+from pyhar import Harness, ScriptedModel
+from pyhar.models import FallbackModel, RetryModel
+
+class DownModel:
+    def __call__(self, messages, tools):
+        raise ConnectionError("provider is down")
+
+fallback = FallbackModel([DownModel(), ScriptedModel(["served by the backup"])])
+model = RetryModel(fallback, max_retries=2, sleep=lambda s: None)
+
+state = Harness(model).run("hello")
+print(state.result)             # -> "served by the backup"
+print(fallback.last_served)     # -> 1 (index of the model that answered)
+```
+
+### `RouterModel`
+
+Routes each call to one of several **named** models via a policy callback
+`route(messages, tools) -> key`. Unknown keys fall back to `default`;
+construction raises `ValueError` if `default` is not one of the model keys.
+
+| Argument | Purpose |
+| --- | --- |
+| `models` | `dict[str, Model]` of named models (positional) |
+| `route` | `callable(messages, tools) -> str` picking the key per call (keyword-only, required) |
+| `default` | key used when `route` returns an unknown key (keyword-only, required) |
+
+The key that served the last call is available as `.last_key` — set **only
+after the routed model actually returned**, so after a failed call it reads
+`None`.
+
+### Recipe: cheap/strong tiering with `BudgetPolicy`
+
+`RouterModel` is the cheap/strong "frontier + sidekick" tiering primitive. Pair
+it with `BudgetPolicy(on_over_soft=...)`: the router closure reads a flag, and
+the soft-budget callback flips it. With real backends that looks like:
+
+```python
+from pyhar import BudgetPolicy
+from pyhar.models import AnthropicModel, RouterModel
+
+tier = {"key": "strong"}
+router = RouterModel(
+    {"strong": AnthropicModel("claude-opus-4-8"),
+     "cheap": AnthropicModel("claude-haiku-4-5")},
+    route=lambda messages, tools: tier["key"],
+    default="strong",
+)
+budget = BudgetPolicy(
+    max_total_tokens=200_000,
+    on_over_soft=lambda state: tier.update(key="cheap"),
+)
+```
+
+And here is the same wiring as a key-free runnable demo — `soft_fraction=0.0`
+makes the soft warning fire after the first turn, so the second turn is served
+by the cheap tier:
+
+```python
+from pyhar import BudgetPolicy, Harness, ScriptedModel, tool
+from pyhar.models import RouterModel
+
+@tool
+def add(a: int, b: int) -> int:
+    """Add two integers."""
+    return a + b
+
+tier = {"key": "strong"}
+router = RouterModel(
+    {"strong": ScriptedModel([("tool", "add", {"a": 2, "b": 3})]),
+     "cheap": ScriptedModel(["The sum is 5."])},
+    route=lambda messages, tools: tier["key"],
+    default="strong",
+)
+budget = BudgetPolicy(
+    max_total_tokens=200_000,
+    soft_fraction=0.0,          # fire the soft warning immediately (demo only)
+    on_over_soft=lambda state: tier.update(key="cheap"),
+)
+
+state = Harness(router, components=[budget], tools=[add]).run("What is 2 + 3?")
+print(state.result)         # -> "The sum is 5."
+print(router.last_key)      # -> "cheap" (the tier that served the final turn)
+```
 
 ## Write your own `Model`
 

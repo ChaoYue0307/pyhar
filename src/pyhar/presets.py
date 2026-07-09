@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from .components.compactor import Compactor
+from .components.loop_guard import LoopGuard
 from .components.tool_budget import ToolOutputBudget
 from .components.verifier import Check, Verifier
 from .core.harness import Harness
@@ -34,10 +35,12 @@ def coding_agent(
     **kw,
 ) -> Harness:
     """A Claude-Code-shaped harness: tool-output budgeting + staged compaction
-    (+ optional verify->retry). The whole agent's harness, as swappable parts."""
+    + a repeated-call loop guard (+ optional verify->retry). The whole agent's
+    harness, as swappable parts."""
     components = [
         ToolOutputBudget(max_tokens=tool_output_tokens),
         Compactor(target_tokens=context_tokens),
+        LoopGuard(),
     ]
     if check is not None:
         components.append(Verifier(check))

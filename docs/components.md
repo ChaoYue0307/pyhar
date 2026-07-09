@@ -12,9 +12,13 @@ from pyhar import (
     Harness, ScriptedModel, tool,
     Compactor, ToolOutputBudget, Verifier, BudgetPolicy,
     ContextBuilder, Memory, StateArtifact, MemoryStore, FileStore,
-    Permissions, Tracer,
+    Permissions, Tracer, LoopGuard,
 )
 ```
+
+Every built-in component is also auto-registered by its `name` in
+`pyhar.registry`, so you can look one up by string — e.g.
+`registry.get("compactor")` returns the `Compactor` class.
 
 All snippets below run without an API key — they drive the harness with
 [`ScriptedModel`](models.md), which replays a fixed list of steps: a plain
@@ -150,6 +154,10 @@ Verifier(
 
 **Writes to `state.memory`:** `_verified` — the boolean from the most recent
 check.
+
+The retry counter resets in `on_start`, so a reused `Harness` gets its full
+retry budget back on every run — it is safe to call `.run(...)` repeatedly on
+the same instance.
 
 ```python
 from pyhar import Harness, ScriptedModel, Verifier
@@ -387,6 +395,66 @@ state = Harness(
 
 print(state.memory["_denied"])  # [{'tool': 'deploy', 'reason': "tool 'deploy' is blocked"}]
 ```
+
+---
+
+## LoopGuard
+
+*New in 0.3.0.*
+
+**What it does:** breaks repeated-tool-call loops — the classic stuck-agent
+failure mode. It watches tool calls by identity key `(name, canonicalized
+arguments)` (argument dicts are canonicalized at every nesting level, so
+`{"a": 1, "b": 2}` and `{"b": 2, "a": 1}` count as the same call). Once an
+identical call has run `max_repeats` times *in a row*, further identical calls
+are denied with a nudge telling the model to change approach. As a backstop,
+`max_total_repeats` bounds how many times an identical call may run across the
+whole run, consecutive or not. `LoopGuard` is included in the `coding_agent`
+preset.
+
+**Fires on:** `before_tool` (the denial string becomes the tool result, so the
+call never runs) and `on_start` (counters reset per run, so a reused `Harness`
+never inherits stale counters).
+
+**Constructor (all keyword-only):**
+
+```python
+LoopGuard(
+    *,
+    max_repeats: int = 3,        # identical calls allowed in a row before denial
+    max_total_repeats: int = 8,  # identical calls allowed across the whole run
+)
+```
+
+**Writes to `state.memory`:** `_loop_guard` — a list with one entry per denied
+repeat: `{"tool": name, "args": arguments, "streak": ..., "total": ...}`.
+
+```python
+from pyhar import Harness, ScriptedModel, tool, LoopGuard
+
+@tool
+def search(q: str) -> str:
+    """Search for q."""
+    return "no results"
+
+model = ScriptedModel([
+    ("tool", "search", {"q": "answer"}),
+    ("tool", "search", {"q": "answer"}),
+    ("tool", "search", {"q": "answer"}),
+    ("tool", "search", {"q": "answer"}),  # 4th identical call in a row — denied
+    "giving up",
+])
+state = Harness(model, components=[LoopGuard()], tools=[search]).run("find the answer")
+
+print(state.memory["_loop_guard"])
+# [{'tool': 'search', 'args': {'q': 'answer'}, 'streak': 4, 'total': 4}]
+```
+
+The first three calls run normally (`max_repeats=3`); the fourth is denied and
+the model instead receives a tool result like
+`[loop guard: search was already called with these exact arguments 3 times in a
+row. The result will not change — try a different tool, different arguments, or
+answer with what you have.]`.
 
 ---
 

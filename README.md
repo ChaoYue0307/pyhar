@@ -11,7 +11,7 @@ packaged as small typed modules behind **one interface** that drops into *any* l
 [![CI](https://github.com/ChaoYue0307/pyhar/actions/workflows/ci.yml/badge.svg)](https://github.com/ChaoYue0307/pyhar/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%20%E2%80%93%203.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-38%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-73%20passing-brightgreen)
 ![Deps](https://img.shields.io/badge/runtime%20deps-0-informational)
 
 </div>
@@ -82,7 +82,7 @@ flowchart TD
     C --> D[[model call]]
     D --> E[after_model]
     E --> F{tool calls?}
-    F -- yes --> G["before_tool<br/><i>Permissions gate</i>"]
+    F -- yes --> G["before_tool<br/><i>Permissions · LoopGuard</i>"]
     G --> H[dispatch tool]
     H --> I["after_tool<br/><i>ToolOutputBudget</i>"]
     I --> J["after_turn<br/><i>StateArtifact</i>"]
@@ -138,7 +138,11 @@ or `OllamaModel(...)` to run against a real model — nothing else changes.
 | Survive context limits on long runs | `Compactor` + `StateArtifact` | compact in-window; persist decisions so a fresh context resumes |
 | Give the agent memory across turns/sessions | `Memory` | pinned core block + keyword recall, storage-agnostic |
 | See exactly what your agent did | `Tracer` | a structured event stream (with an optional live sink) |
-| Tune a harness with numbers, not vibes | `bench` | A/B two configs on one task, report tokens/cost/turns |
+| Break the repeated-tool-call death spiral | `LoopGuard` | denies an identical call after N repeats, nudges a change of approach |
+| Get structured (JSON) final answers | `Verifier` + `checks.json_schema_check` | schema-validated output with targeted retry feedback |
+| Run async models and tools | `AsyncHarness` | `await harness.arun(task)`; sync pieces auto-offload to threads |
+| Survive flaky providers / cut costs | `RetryModel` / `FallbackModel` / `RouterModel` | backoff, failover, cheap↔strong routing — they nest |
+| Tune a harness with numbers, not vibes | `bench` | A/B configs over N trials; means, std, success rate |
 | Reuse your scaffolding inside LangGraph | `adapters` | the same components as middleware |
 
 A **safe, observable agent** is just a composition:
@@ -172,10 +176,11 @@ state.memory["_trace"]    # the full event stream
 | `Memory` | tiered core/recall/archival (Letta / LangMem mental model), storage-agnostic | `on_start` / `before_model` |
 | `StateArtifact` | externalized progress + decisions so a fresh context reconstructs "where am I" (`MemoryStore` / `FileStore`) | `on_start` / `after_turn` |
 | `BudgetPolicy` | explicit token/cost ceilings + soft-warning hook for model tiering | `after_turn` |
+| `LoopGuard` | break repeated identical tool-call loops with a change-of-approach nudge | `before_tool` |
 | `Tracer` | structured event stream for observability, optional live `sink` | all hooks |
-| `Harness` | the batteries-included loop that runs a composition | — |
+| `Harness` / `AsyncHarness` | the batteries-included loop (sync and async twins) that runs a composition | — |
 | `subagent_tool` | expose an isolated sub-harness as a `Tool` (return-only-relevant-excerpt) | — |
-| `bench` | A/B two harness configs on one task; report tokens/cost/turns | — |
+| `bench` | A/B harness configs over N trials; means, std, success rate | — |
 
 Full reference with constructor arguments and runnable snippets → **[docs/components.md](docs/components.md)**.
 
@@ -199,8 +204,17 @@ OllamaModel("llama3.1")                         # local OSS, zero dependencies
 | `OpenAIModel` / `OpenAICompatibleModel` | OpenAI SDK; `base_url=` targets any OpenAI-compatible / OSS server |
 | `OllamaModel` | local models over stdlib `urllib` — **zero dependencies** |
 | `ScriptedModel` / `EchoModel` | deterministic, key-free — tests, examples, CI |
+| `RetryModel` / `FallbackModel` / `RouterModel` | combinators: backoff retry, ordered failover, policy-routed tiering — they wrap any `Model` and nest |
 
-Writing your own is ~10 lines → **[docs/models.md](docs/models.md)**.
+Combinators compose like functions — resilience in one line:
+
+```python
+from pyhar.models import RetryModel, FallbackModel
+
+model = RetryModel(FallbackModel([AnthropicModel("claude-opus-4-8"), OllamaModel("llama3.1")]))
+```
+
+Writing your own backend is ~10 lines → **[docs/models.md](docs/models.md)**.
 
 ## Compose with your runtime & MCP
 
@@ -225,10 +239,10 @@ reproducible numbers. From `examples/bench_demo.py` (identical task and model,
 the only difference being two added components):
 
 ```text
-config                ok   turns  in_tok   out_tok  cost
--------------------------------------------------------------
-baseline              yes  2      2166     40       0.0000
-tuned (budget+compact)yes  2      247      40       0.0000
+config                  ok    turns  in_tok    out_tok  cost
+-----------------------------------------------------------------
+baseline                yes   2.0    2166      40       0.0000
+tuned (budget+compact)  yes   2.0    247       40       0.0000
 
 input tokens saved by the primitives: 1919 (89%)
 ```
@@ -238,11 +252,13 @@ Run it yourself:
 ```bash
 python examples/react_agent.py            # full coding-agent harness
 python examples/minimal_loop.py           # SAME components, a hand-rolled loop
+python examples/async_agent.py            # async model + parallel async tools
+python examples/model_routing.py          # retry, failover, cheap/strong tiering
 python examples/permissions_and_tracing.py# gated + traced agent
 python examples/bench_demo.py             # the A/B above
 python examples/memory_and_state.py       # resume across a fresh context
 python examples/real_model.py             # Anthropic / OpenAI / Ollama by env
-pytest                                    # 38 tests, no keys needed
+pytest                                    # the suite, no keys needed
 ```
 
 ## Docs
@@ -264,9 +280,11 @@ pytest                                    # 38 tests, no keys needed
 
 ## Roadmap
 
-Shipped: model backends, runtime adapters (+ experimental LangGraph / OpenAI-Agents),
-MCP interop, and the `ContextBuilder` / `Memory` / `StateArtifact` / `Permissions` /
-`Tracer` / `subagent_tool` primitives, with automatic tool schemas.
+Shipped: model backends + combinators (retry / failover / routing), an async loop
+(`AsyncHarness`) with parallel tool execution, runtime adapters (+ experimental
+LangGraph / OpenAI-Agents), MCP interop, automatic tool schemas, `pyhar.checks`,
+and the `ContextBuilder` / `Memory` / `StateArtifact` / `Permissions` / `Tracer` /
+`LoopGuard` / `subagent_tool` primitives.
 
 Deferred: a torchvision/timm-style **registry** (needs adoption critical mass — a
 seed lives in `pyhar.registry`), **runtime-structure optimization** ("autograd from

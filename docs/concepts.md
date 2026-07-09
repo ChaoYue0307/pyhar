@@ -12,7 +12,7 @@ pip install pyhar-agents      # distribution name
 import pyhar                   # import name
 ```
 
-Version 0.2.0.
+Version 0.3.0.
 
 The mental model has four pieces:
 
@@ -21,7 +21,8 @@ The mental model has four pieces:
 2. **`HarnessState`** — the single shared object every component reads and
    mutates (pyhar's analog of Inspect AI's `TaskState`).
 3. **`Harness.run`** — a small, standard tool-calling loop with the component
-   hooks woven in at fixed points.
+   hooks woven in at fixed points (and `AsyncHarness.arun`, its awaitable
+   twin — see [Async](#async--asyncharnessarun)).
 4. **Portability** — the *same* components run in your own `while` loop, or in
    another runtime via an [adapter](adapters-and-mcp.md).
 
@@ -95,6 +96,18 @@ keeps the live context under; the other three are hard caps on the whole run
 (the harness raises `BudgetExceeded` on `max_total_tokens` / `max_cost`, and
 stops with `memory["_stop_reason"] = "max_turns"` on `max_turns`).
 
+Two `max_turns` semantics worth being precise about (fixed in 0.3.0):
+
+- **`None` means unlimited, `0` means zero turns.** A `Budget(max_turns=0)`
+  stops before the first model call; `max_turns=None` disables the turn cap
+  entirely. (A budget whose `max_turns` is `None` has the `Harness`
+  constructor's `max_turns` argument — default `20` — filled in, so pass
+  `Harness(model, max_turns=None)` explicitly if you truly want no cap.)
+- **The harness copies your `Budget`.** `Harness.__init__` takes a
+  `dataclasses.replace` copy of the budget you pass, so filling in the
+  `max_turns` default — or a component mutating `state.budget` mid-run — never
+  touches the caller's object. Sharing one `Budget` across harnesses is safe.
+
 ---
 
 ## The Harness.run loop
@@ -111,6 +124,7 @@ Harness(
     budget=None,
     token_counter=default_token_counter,
     max_turns=20,
+    parallel_tools=False,
 ).run(task: str | list[Message]) -> HarnessState
 ```
 
@@ -134,15 +148,32 @@ fixed points, in this exact order:
         `False`, re-open and `continue`; else set `done = True` and record the
         result.
       - *Had tool calls* → if any `should_stop` returns `True`, set `done`.
-3. **`on_end`** — every component, once. `run` returns the `HarnessState`.
+3. **`on_end`** — every component, once. It runs in a `try/finally`, so it
+   **always** fires — even if the loop raised (e.g. `BudgetExceeded`). Flushes
+   and trace summaries survive a blown budget. `run` returns the `HarnessState`.
 
 ```
 on_start
   └─ loop: before_model → model → after_model
            → [ gate/dispatch tools + after_tool ]
            → after_turn → stop decision
-on_end
+on_end   (always — try/finally, even on an exception)
 ```
+
+### Parallel tool calls
+
+By default a turn's tool calls run serially, in order. With
+`Harness(..., parallel_tools=True)` the *allowed* calls of a single turn run
+concurrently — via threads in the sync loop, via `asyncio.gather` in
+[`AsyncHarness`](#async--asyncharnessarun). Two invariants hold either way:
+
+- **Gating happens first, in order.** Every call is passed through every
+  `before_tool` hook sequentially *before* anything is dispatched — hooks are
+  never run concurrently, so components need no locking. Denied calls never
+  execute.
+- **Results come back in call order.** Tool messages are appended (and
+  `after_tool` chains run) in the original call order, no matter which tool
+  finishes first.
 
 ### A runnable example
 
@@ -216,6 +247,65 @@ a candidate-final turn to force another turn until some condition holds.
 
 ---
 
+## Async — AsyncHarness.arun
+
+New in 0.3.0: `AsyncHarness` is the awaitable twin of `Harness` — a subclass
+with identical loop semantics (same hook order, same stop decision, same
+budgets, and `on_end` in the same `try/finally`). Construct it exactly like a
+`Harness` and call `await harness.arun(task)`.
+
+The sync/async boundary is handled for you:
+
+- **Async or sync, mixed freely.** An `async def` model or tool (or an object
+  with an async `__call__`) is awaited directly. A **sync** model or tool is
+  offloaded with `asyncio.to_thread`, so it never blocks the event loop.
+- **Sync closures that return coroutines are awaited too.** If a plain sync
+  callable returns an awaitable (the shape of MCP-wrapped tools), the result is
+  awaited before it enters the context.
+- **Components stay sync.** Hooks are fast in-memory state manipulation, so the
+  `Component` interface is unchanged — every existing component works in both
+  loops as-is.
+- With `parallel_tools=True`, a turn's allowed tool calls run concurrently via
+  `asyncio.gather` (gating first, results in call order — see
+  [Parallel tool calls](#parallel-tool-calls)).
+
+A runnable example — an `async def` model wrapper around a `ScriptedModel`, and
+an async tool:
+
+```python
+import asyncio
+from pyhar import AsyncHarness, ScriptedModel, tool
+
+@tool
+async def fetch_length(word: str) -> int:
+    """Length of a word (pretend network call)."""
+    await asyncio.sleep(0)
+    return len(word)
+
+scripted = ScriptedModel([
+    ("tool", "fetch_length", {"word": "harness"}),
+    "'harness' has 7 letters.",
+])
+
+async def model(messages, tools):        # async def => awaited directly
+    return scripted(messages, tools)
+
+async def main():
+    harness = AsyncHarness(model, tools=[fetch_length])
+    state = await harness.arun("How many letters in 'harness'?")
+    print(state.result)                  # -> 'harness' has 7 letters.
+    print(state.messages[-2].content)    # -> 7   (the tool message)
+
+asyncio.run(main())
+```
+
+Passing the `ScriptedModel` (or any sync model) straight to `AsyncHarness`
+works too — it is simply offloaded to a thread. The inherited synchronous
+`run()` also still works on an `AsyncHarness` when the model and tools are all
+sync.
+
+---
+
 ## The same components in your own loop
 
 The payoff: components are portable. Because `HarnessState` is an explicit
@@ -226,8 +316,12 @@ fire in the same order shown above:
 ```python
 from pyhar import Component, HarnessState, Message, ScriptedModel
 
+class Notes(Component):          # any component — the Firewall above works too
+    def on_start(self, state):
+        state.memory["notes"] = ["run started"]
+
 model = ScriptedModel(["done"])
-components: list[Component] = [Firewall()]
+components: list[Component] = [Notes()]
 
 state = HarnessState()
 state.add_message(Message(role="user", content="hi"))

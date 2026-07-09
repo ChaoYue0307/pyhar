@@ -1,4 +1,5 @@
 """Core abstractions: state, model boundary, tools, the Component, the loop."""
+from .async_harness import AsyncHarness
 from .component import Component
 from .harness import BudgetExceeded, Harness
 from .model import Model, Response, ScriptedModel
@@ -15,6 +16,7 @@ from .tool import Tool, schema_from_signature, tool
 __all__ = [
     "Component",
     "Harness",
+    "AsyncHarness",
     "BudgetExceeded",
     "Model",
     "Response",

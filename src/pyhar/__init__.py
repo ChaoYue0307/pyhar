@@ -11,13 +11,14 @@ and drop into *any* loop. Bring your own runtime; bring your own tools (MCP).
     harness = coding_agent(model, tools=[...])
     state = harness.run("do the thing")
 """
-from . import adapters, models, presets, registry
+from . import adapters, checks, models, presets, registry
 from .bench import BenchReport, RunReport, bench
 from .components import (
     BudgetPolicy,
     Compactor,
     ContextBuilder,
     FileStore,
+    LoopGuard,
     Memory,
     MemoryStore,
     Permissions,
@@ -27,6 +28,7 @@ from .components import (
     Verifier,
 )
 from .core import (
+    AsyncHarness,
     Budget,
     BudgetExceeded,
     Component,
@@ -45,12 +47,13 @@ from .core import (
 )
 from .subagent import spawn, subagent_tool
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     # core
     "Component",
     "Harness",
+    "AsyncHarness",
     "BudgetExceeded",
     "Model",
     "Response",
@@ -76,10 +79,11 @@ __all__ = [
     "FileStore",
     "Permissions",
     "Tracer",
+    "LoopGuard",
     # subagents
     "spawn",
     "subagent_tool",
-    # bench / presets / registry / models / adapters
+    # bench / presets / registry / models / adapters / checks
     "bench",
     "BenchReport",
     "RunReport",
@@ -87,4 +91,5 @@ __all__ = [
     "registry",
     "models",
     "adapters",
+    "checks",
 ]

@@ -8,6 +8,7 @@ you can apply them to your own loop or another runtime instead of using this.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 from typing import Any
 
 from .component import Component
@@ -38,15 +39,19 @@ class Harness:
         budget: Budget | None = None,
         token_counter: TokenCounter = default_token_counter,
         max_turns: int = 20,
+        parallel_tools: bool = False,
     ):
         self.model = model
         self.components: list[Component] = list(components)
         self.tools: dict[str, Tool] = {t.name: t for t in tools}
         self.system = system
-        self.budget = budget or Budget()
+        # copy the budget so applying the max_turns default (or a component
+        # mutating state.budget mid-run) never corrupts a caller-shared Budget
+        self.budget = replace(budget) if budget is not None else Budget()
         if self.budget.max_turns is None:
             self.budget.max_turns = max_turns
         self.token_counter = token_counter
+        self.parallel_tools = parallel_tools
 
     # -- public API ------------------------------------------------------
 
@@ -55,8 +60,17 @@ class Harness:
         for c in self.components:
             c.on_start(state)
 
+        try:
+            self._loop(state)
+        finally:
+            # on_end always runs, even if the loop raised (e.g. BudgetExceeded)
+            for c in self.components:
+                c.on_end(state)
+        return state
+
+    def _loop(self, state: HarnessState) -> None:
         while not state.done:
-            if state.turn >= (self.budget.max_turns or 10**9):
+            if self.budget.max_turns is not None and state.turn >= self.budget.max_turns:
                 state.memory.setdefault("_stop_reason", "max_turns")
                 break
             self._check_hard_budget(state)
@@ -81,9 +95,7 @@ class Harness:
                 c.after_model(state, response)
 
             if response.tool_calls:
-                for call in response.tool_calls:
-                    denial = self._gate(state, call)
-                    result = denial if denial is not None else self._dispatch(call)
+                for call, result in self._run_tools(state, list(response.tool_calls)):
                     for c in self.components:
                         result = c.after_tool(state, call, result)
                     state.add_message(
@@ -112,10 +124,6 @@ class Harness:
             elif any(c.should_stop(state) is True for c in self.components):
                 state.done = True
 
-        for c in self.components:
-            c.on_end(state)
-        return state
-
     # -- internals -------------------------------------------------------
 
     def _new_state(self, task: str | list[Message]) -> HarnessState:
@@ -131,6 +139,27 @@ class Harness:
         else:
             state.messages.extend(task)
         return state
+
+    def _run_tools(
+        self, state: HarnessState, calls: list[ToolCall]
+    ) -> list[tuple[ToolCall, Any]]:
+        """Gate every call (in order), then execute the allowed ones — serially
+        by default, concurrently when ``parallel_tools`` is set. Results are
+        always returned in the original call order."""
+        denials = [self._gate(state, c) for c in calls]
+        outcomes: list[Any] = list(denials)
+        pending = [i for i, d in enumerate(denials) if d is None]
+        if self.parallel_tools and len(pending) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(8, len(pending))) as ex:
+                futures = {i: ex.submit(self._dispatch, calls[i]) for i in pending}
+                for i, fut in futures.items():
+                    outcomes[i] = fut.result()  # _dispatch never raises
+        else:
+            for i in pending:
+                outcomes[i] = self._dispatch(calls[i])
+        return list(zip(calls, outcomes, strict=True))
 
     def _gate(self, state: HarnessState, call: ToolCall) -> str | None:
         """Ask every component to allow/deny a tool call; the first denial wins.

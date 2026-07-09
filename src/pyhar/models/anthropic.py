@@ -83,6 +83,7 @@ class AnthropicModel:
             text="".join(text_parts) or None,
             tool_calls=tool_calls,
             usage=Usage(input_tokens=it, output_tokens=ot, cost=cost),
+            stop_reason=getattr(resp, "stop_reason", None),  # e.g. end_turn/tool_use/max_tokens/refusal
             raw=resp,
         )
 

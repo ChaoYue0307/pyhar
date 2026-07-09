@@ -113,5 +113,6 @@ def _to_response(data: dict[str, Any]) -> Response:
             output_tokens=data.get("eval_count", 0),
             cost=0.0,
         ),
+        stop_reason=data.get("done_reason"),  # e.g. stop/length
         raw=data,
     )

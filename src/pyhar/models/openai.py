@@ -67,6 +67,7 @@ class OpenAIModel:
             text=getattr(msg, "content", None),
             tool_calls=tool_calls,
             usage=Usage(input_tokens=it, output_tokens=ot, cost=cost),
+            stop_reason=getattr(resp.choices[0], "finish_reason", None),  # e.g. stop/tool_calls/length
             raw=resp,
         )
 

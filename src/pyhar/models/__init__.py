@@ -6,6 +6,7 @@ importing this module never requires anthropic/openai to be installed.
 Bring your own model by implementing the tiny ``pyhar.Model`` protocol.
 """
 from .anthropic import AnthropicModel
+from .combinators import FallbackModel, RetryModel, RouterModel
 from .echo import EchoModel
 from .ollama import OllamaModel
 from .openai import OpenAICompatibleModel, OpenAIModel
@@ -16,4 +17,7 @@ __all__ = [
     "OpenAIModel",
     "OpenAICompatibleModel",
     "OllamaModel",
+    "RetryModel",
+    "FallbackModel",
+    "RouterModel",
 ]

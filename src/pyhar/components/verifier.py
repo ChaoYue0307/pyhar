@@ -26,6 +26,11 @@ class Verifier(Component):
         self._retries = 0
         self._reopen = False
 
+    def on_start(self, state: HarnessState) -> None:
+        # reset per-run so a reused Harness gets its full retry budget back
+        self._retries = 0
+        self._reopen = False
+
     def after_turn(self, state: HarnessState) -> None:
         self._reopen = False
         if state.last_turn_had_tool_calls:

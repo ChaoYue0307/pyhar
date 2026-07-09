@@ -17,6 +17,7 @@ class Response:
     text: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
+    stop_reason: str | None = None  # provider stop/finish reason, normalized as-is
     raw: Any = None  # the untouched provider payload, if any
 
 
