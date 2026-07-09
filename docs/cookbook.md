@@ -655,6 +655,47 @@ from the same config.
 
 ---
 
+## 15. Let the traces tune the harness
+
+**When:** you've composed a harness but the knobs (`max_tokens`, `target_tokens`,
+`max_turns`, which optional components to include) are guesses. `tune` searches a
+config space, using the trace signals components leave in `state.memory` as
+directional hints, and keeps only changes that measurably improve the objective.
+
+```python
+from pyhar import Range, ScriptedModel, tool, tune
+
+
+@tool
+def read_log(path: str) -> str:
+    """Return a big log blob."""
+    return "log line\n" * 500
+
+
+def make_model():   # fresh model per run — ScriptedModel is consumed
+    return ScriptedModel([("tool", "read_log", {"path": "app.log"}), "done"])
+
+
+space = {
+    "components": [
+        {"name": "tool_output_budget", "args": {"max_tokens": Range(100, 2900, step=700)}},
+    ],
+}
+
+report = tune(space, model_factory=make_model, tasks=["summarize the log"],
+              tools=[read_log], budget_runs=12, seed=7)
+
+print(report.table())            # every candidate: score, success, tokens
+print(report.explain())          # e.g. "tool-output budget never fired — tighten it"
+print(report.best_config)        # plain JSON -> harness_from_config (recipe 14)
+```
+
+The winning config is shareable data — check it in, load it with
+`harness_from_config`, re-verify it any time with `bench` (recipe 5). Full
+signal→hint table and objective weighting → [Tuning](tuning.md).
+
+---
+
 ## Semantics worth knowing in 0.3.0
 
 Small behavioral fixes that make harnesses safer to reuse and reason about:

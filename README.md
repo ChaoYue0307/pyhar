@@ -146,6 +146,7 @@ or `OllamaModel(...)` to run against a real model — nothing else changes.
 | Survive flaky providers / cut costs | `RetryModel` / `FallbackModel` / `RouterModel` | backoff, failover, cheap↔strong routing — they nest |
 | Ship a harness as shareable data | `harness_from_config` | components by registered name + args, from JSON/YAML |
 | Tune a harness with numbers, not vibes | `bench` | A/B configs over N trials; means, std, success rate |
+| Let run traces tune the harness for you | `tune` | trace signals propose config changes; only measured wins are kept |
 | Reuse your scaffolding inside LangGraph | `adapters` | the same components as middleware |
 
 A **safe, observable agent** is just a composition:
@@ -272,6 +273,32 @@ tuned (budget+compact)  yes   2.0    247       40       0.0000
 input tokens saved by the primitives: 1919 (89%)
 ```
 
+And in 0.5.0 the loop closes: **`tune` finds that config for you.** Mark knobs
+in a config template, and the tuner runs candidates, reads the trace signals
+components leave behind, proposes directional changes, and keeps only measured
+wins — every accepted change attributable to a named signal:
+
+```python
+from pyhar import Choice, Range, tune
+
+space = {
+    "components": [
+        {"name": "tool_output_budget", "args": {"max_tokens": Range(100, 2900)}},
+        {"name": "compactor", "args": {"target_tokens": Choice(500, 1500, 3000)},
+         "optional": True},
+    ],
+    "max_turns": Range(2, 10),
+}
+report = tune(space, model_factory=make_model, tasks=[task], budget_runs=14, seed=7)
+report.best_config      # plain JSON -> harness_from_config
+print(report.explain()) # "tool-output budget never fired — tighten it" -> kept
+```
+
+From `examples/tune_harness.py`, offline and deterministic: **1601 → 193 mean
+tokens (88% saved) at 100% success, in 5 runs.** Honest framing: seeded greedy
+local search guided by run evidence — measured, inspectable, no global-optimality
+claims. Details → **[docs/tuning.md](docs/tuning.md)**.
+
 Run it yourself:
 
 ```bash
@@ -282,6 +309,7 @@ python examples/streaming.py              # live deltas via the on_delta hook
 python examples/model_routing.py          # retry, failover, cheap/strong tiering
 python examples/permissions_and_tracing.py# gated + traced agent
 python examples/bench_demo.py             # the A/B above
+python examples/tune_harness.py           # trace-guided config search
 python examples/memory_and_state.py       # resume across a fresh context
 python examples/real_model.py             # Anthropic / OpenAI / Ollama by env
 pytest                                    # the suite, no keys needed

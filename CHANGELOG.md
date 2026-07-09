@@ -5,6 +5,31 @@ All notable changes to pyhar are documented here. Format loosely follows
 
 Distributed on PyPI as `pyhar-agents`; the import name is `pyhar`.
 
+## [0.5.0] — 2026-07-09
+
+### Added
+- **`pyhar.optimize` — trace-guided harness-config search** (the deferred
+  "autograd from traces" bet, shipped as honest, measured local search):
+  - `Choice(...)` / `Range(lo, hi, step=...)` mark tunable knobs inside a
+    normal `harness_from_config` template; components may be `"optional"`.
+  - `tune(space, model_factory=..., tasks=..., budget_runs=...)` evaluates the
+    defaults + random samples, then greedily applies **directional mutations
+    derived from run-trace signals** (`_tool_savings` never fired → tighten,
+    `_stop_reason == "max_turns"` on failures → raise the cap, verification
+    still failing → more retries, compactor idle → lower target or drop it),
+    keeping a change only when the `Objective` score measurably improves.
+  - `Objective(success_weight, token_penalty_per_1k, cost_penalty,
+    turn_penalty)` or any callable — success dominates by default, tokens
+    tie-break.
+  - `TuneReport` — full step history (`table()`), the winning config as plain
+    JSON (`best_config`, ready for `harness_from_config`), and `explain()`
+    naming the trace signal behind every accepted change.
+  - Deterministic for a fixed seed; `budget_runs` caps total harness runs;
+    zero new dependencies.
+- Top-level exports: `tune`, `Choice`, `Range`, `Objective`, `TuneReport`.
+- New example: `tune_harness.py` (finds an 88% token reduction at 100% success
+  in a handful of runs, offline).
+
 ## [0.4.0] — 2026-07-09
 
 ### Added

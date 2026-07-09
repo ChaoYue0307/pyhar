@@ -11,7 +11,7 @@ and drop into *any* loop. Bring your own runtime; bring your own tools (MCP).
     harness = coding_agent(model, tools=[...])
     state = harness.run("do the thing")
 """
-from . import adapters, checks, models, presets, registry
+from . import adapters, checks, models, optimize, presets, registry
 from .bench import BenchReport, RunReport, bench
 from .components import (
     BudgetPolicy,
@@ -46,9 +46,10 @@ from .core import (
     schema_from_signature,
     tool,
 )
+from .optimize import Choice, Objective, Range, TuneReport, tune
 from .subagent import spawn, subagent_tool
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     # core
@@ -84,12 +85,18 @@ __all__ = [
     # subagents
     "spawn",
     "subagent_tool",
-    # bench / presets / registry / models / adapters / checks / config
+    # bench / presets / registry / models / adapters / checks / config / optimize
     "bench",
     "BenchReport",
     "RunReport",
     "harness_from_config",
     "components_from_config",
+    "tune",
+    "Choice",
+    "Range",
+    "Objective",
+    "TuneReport",
+    "optimize",
     "presets",
     "registry",
     "models",

@@ -10,6 +10,7 @@ snippet runs offline with `ScriptedModel` (no API key).
 | **[Model backends & tools](models.md)** | The `Model` protocol, `AnthropicModel` / `OpenAIModel` / `OllamaModel` / `EchoModel`, streaming (`stream`/`astream` + `on_delta`), the `RetryModel` / `FallbackModel` / `RouterModel` combinators, normalized `Response.stop_reason`, writing your own backend, and automatic tool schemas. |
 | **[Adapters, MCP & subagents](adapters-and-mcp.md)** | `component_hooks` for your own loop, the hardened LangGraph middleware (sync + async, supported-component matrix), the OpenAI-Agents binder, MCP tool import, and isolated subagents. |
 | **[Cookbook](cookbook.md)** | Copy-paste recipes: safe agents, observability, verify→retry, long-horizon resume, token budgeting, subagents, resilient model stacks, loop guarding, output checks, benchmarking, streaming, and config-driven harnesses. |
+| **[Tuning](tuning.md)** | `tune` — trace-guided harness-config search: `Choice`/`Range` spaces, the signal→hint table, objectives, and reading a `TuneReport`. |
 
 New here? The project [README](../README.md) has the 60-second pitch, the
 architecture diagram, and the use-case table.

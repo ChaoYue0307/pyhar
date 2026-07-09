@@ -25,7 +25,15 @@ from .tool import Tool
 
 
 class BudgetExceeded(RuntimeError):
-    pass
+    """Raised when a hard budget ceiling is crossed mid-run.
+
+    Carries the run's ``HarnessState`` as ``.state`` so callers (and the
+    tuner) can account for what the aborted run actually consumed.
+    """
+
+    def __init__(self, message: str, state: HarnessState | None = None):
+        super().__init__(message)
+        self.state = state
 
 
 class Harness:
@@ -206,10 +214,10 @@ class Harness:
         b = state.budget
         if b.max_total_tokens is not None and state.usage.total_tokens > b.max_total_tokens:
             raise BudgetExceeded(
-                f"total tokens {state.usage.total_tokens} > {b.max_total_tokens}"
+                f"total tokens {state.usage.total_tokens} > {b.max_total_tokens}", state
             )
         if b.max_cost is not None and state.usage.cost > b.max_cost:
-            raise BudgetExceeded(f"cost {state.usage.cost} > {b.max_cost}")
+            raise BudgetExceeded(f"cost {state.usage.cost} > {b.max_cost}", state)
 
 
 def _as_text(result: Any) -> str:
